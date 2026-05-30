@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>技術的負債体感ゲーム</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f9; }
+    h1, h2, h3 { color: #333; text-align: center; }
+    .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .btn { display: block; width: 100%; padding: 12px; margin: 10px 0; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; color: white; text-align: center; }
+    .btn-primary { background-color: #4285f4; }
+    .btn-success { background-color: #34a853; }
+    .btn-warning { background-color: #fbbc05; color: #333; }
+    .btn-danger { background-color: #ea4335; }
+    .btn-secondary { background-color: #6c757d; }
+    .btn:disabled { background-color: #ccc; cursor: not-allowed; }
+    
+    .status-board { display: flex; justify-content: space-around; font-size: 1.2em; font-weight: bold; }
+    .status-item { text-align: center; }
+    .value-box { font-size: 2em; color: #4285f4; }
+    .debt-box { color: #ea4335; }
+
+    select { width: 100%; padding: 10px; font-size: 16px; margin-bottom: 20px; }
+    
+    .hidden { display: none; }
+    .log-area { font-size: 0.9em; color: #666; max-height: 200px; overflow-y: auto; border-top: 1px solid #ddd; padding-top: 10px; }
+    
+    .mode-selection { display: flex; gap: 10px; }
+    .mode-btn { flex: 1; padding: 20px; border: 2px solid #ddd; border-radius: 8px; cursor: pointer; text-align: center; background: white; }
+    .mode-btn.selected { border-color: #4285f4; background-color: #e8f0fe; }
+    .mode-btn h3 { margin: 0 0 5px 0; }
+    
+    .task-display { text-align: center; border: 2px dashed #4285f4; padding: 20px; margin: 20px 0; background-color: #e8f0fe; }
+    .task-text { font-size: 1.5em; font-weight: bold; display: block; margin-top: 10px;}
+    .task-constraint { color: #ea4335; font-weight: bold; margin-top: 10px; display: block; }
+
+    .action-buttons { display: flex; gap: 10px; }
+    .action-buttons button { flex: 1; }
+  </style>
+</head>
+<body>
+
+  <div id="setup-screen" class="card">
+    <h2>チーム選択</h2>
+    <p>プレイするチームを選んでください。</p>
+    <select id="team-select">
+      <option value="">-- 選択してください --</option>
+      <option value="Team 200">Team 200</option>
+      <option value="Team 301">Team 301</option>
+      <option value="Team 404">Team 404</option>
+      <option value="Team 418">Team 418</option>
+      <option value="Team 500">Team 500</option>
+    </select>
+    <button class="btn btn-primary" onclick="startGame()">ゲーム開始</button>
+  </div>
+
+  <div id="game-screen" class="hidden">
+    <div class="card status-board">
+      <div class="status-item">
+        <div>現在の得点</div>
+        <div id="score-display" class="value-box">0</div>
+      </div>
+      <div class="status-item">
+        <div>現在の負債</div>
+        <div id="debt-display" class="value-box debt-box">0.00</div>
+      </div>
+    </div>
+
+    <div id="phase-mode" class="card">
+      <h3>行動を選択</h3>
+      <div class="mode-selection">
+        <div class="mode-btn" onclick="selectMode('normal')">
+          <h3>継続 (得点GET)</h3>
+          <p>お題をクリアして得点を得る。<br>負債があると難易度UP。</p>
+        </div>
+        <div class="mode-btn" onclick="selectMode('pay')">
+          <h3>負債解消</h3>
+          <p>お題をクリアして負債を減らす。<br>得点は入らない。</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="phase-task-select" class="card hidden">
+      <h3 id="task-select-title">お題の文字数を選択</h3>
+      <div id="task-buttons">
+        </div>
+      <button class="btn btn-secondary" onclick="backToMode()">戻る</button>
+    </div>
+
+    <div id="phase-execution" class="card hidden">
+      <h3>現在のお題</h3>
+      <div class="task-display">
+        <span id="current-task-category"></span>
+        <span id="current-task-text" class="task-text"></span>
+        <span id="current-task-constraint" class="task-constraint"></span>
+      </div>
+      <p>チームで回答を共有してください。<br>終わったら下のボタンを押してください。</p>
+      
+      <div id="debt-generation-preview" class="hidden" style="color:#d9534f; text-align:center; margin-bottom:10px;">
+        </div>
+
+      <div class="action-buttons">
+        <button id="giveup-btn" class="btn btn-warning" onclick="giveUpTask()">あきらめる (負債+0.1)</button>
+        <button id="complete-btn" class="btn btn-success" onclick="completeTask()">お題クリア（次へ）</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>履歴</h3>
+      <div id="history-log" class="log-area"></div>
+      <button class="btn btn-danger" style="margin-top:20px;" onclick="resetTeamData()">このチームのデータをリセット</button>
+    </div>
+  </div>
+
+<script>
+  // --- データ定義 ---
+  // キー "0" は練習問題として扱う（1問のみ）
+  const taskData = {
+    0: [
+      "練習: かさ"
+    ],
+    2: [
+      "色: あか", "動物: いぬ", "食べ物: こめ", 
+      "「そ／ぞ」から始まる言葉", "「う」から始まる言葉"
+    ],
+    3: [
+      "動物: うさぎ", "食べ物: かれー", "都道府県: あいち", 
+      "「し／じ」から始まる言葉", "「や」から始まる言葉"
+    ],
+    4: [
+      "国名: あめりか", "植物: あさがお", "動物: らいおん", "都道府県: あおもり", 
+      "「る」から始まる言葉"
+    ],
+    5: [
+      "動物: はむすたー", "植物: へびいちご", "「と／ど」から始まる言葉"
+    ],
+    6: [
+      "「つ／づ」から始まる言葉", "「く／ぐ」から始まる言葉", 
+      "「い」から始まる言葉", "「ぬ」から始まる言葉"
+    ],
+    7: [
+      "「ち・ぢ」から始まる言葉", "「ー」（長音）を含む言葉", 
+      "「た／だ」から始まる言葉"
+    ]
+  };
+
+  // --- ステート管理 ---
+  let currentTeam = "";
+  let gameState = {
+    score: 0,
+    debt: 0.0,
+    usedTasks: [], // "2-0", "0-1" (key-index)
+    history: []
+  };
+  
+  let tempState = {
+    mode: null, // 'normal' or 'pay'
+    taskKey: "", // "0" または文字数
+    selectedLength: 0,
+    taskIndex: 0,
+    taskText: "",
+    requiredLength: 0
+  };
+
+  // --- 初期化・ロード ---
+  function startGame() {
+    const teamSelect = document.getElementById('team-select');
+    if (!teamSelect.value) return alert("チームを選択してください");
+    
+    currentTeam = teamSelect.value;
+    loadData();
+    
+    document.getElementById('setup-screen').classList.add('hidden');
+    document.getElementById('game-screen').classList.remove('hidden');
+    updateDisplay();
+  }
+
+  function loadData() {
+    const saved = localStorage.getItem('techDebtGame_' + currentTeam);
+    if (saved) {
+      gameState = JSON.parse(saved);
+    } else {
+      // 新規
+      gameState = { score: 0, debt: 0.0, usedTasks: [], history: [] };
+    }
+  }
+
+  function saveData() {
+    localStorage.setItem('techDebtGame_' + currentTeam, JSON.stringify(gameState));
+    updateDisplay();
+  }
+
+  function updateDisplay() {
+    document.getElementById('score-display').textContent = gameState.score;
+    document.getElementById('debt-display').textContent = gameState.debt.toFixed(2);
+    
+    const historyDiv = document.getElementById('history-log');
+    historyDiv.innerHTML = gameState.history.map(h => `<div>${h}</div>`).join('');
+  }
+
+  function resetTeamData() {
+    if(!confirm("本当にこのチームのデータをリセットしますか？\n（チームは変更せず、最初からやり直します）")) return;
+    
+    localStorage.removeItem('techDebtGame_' + currentTeam);
+    gameState = { score: 0, debt: 0.0, usedTasks: [], history: [] };
+    
+    document.getElementById('phase-task-select').classList.add('hidden');
+    document.getElementById('phase-execution').classList.add('hidden');
+    document.getElementById('phase-mode').classList.remove('hidden');
+
+    updateDisplay();
+    alert("データをリセットしました。ゲームを最初から開始します。");
+  }
+
+  // --- ゲーム進行: フェーズ1 (モード選択) ---
+  function selectMode(mode) {
+    tempState.mode = mode;
+    
+    document.getElementById('phase-mode').classList.add('hidden');
+    document.getElementById('phase-task-select').classList.remove('hidden');
+    
+    renderTaskButtons();
+  }
+  
+  function backToMode() {
+    document.getElementById('phase-task-select').classList.add('hidden');
+    document.getElementById('phase-mode').classList.remove('hidden');
+  }
+
+  // --- ゲーム進行: フェーズ2 (お題選択) ---
+  function renderTaskButtons() {
+    const container = document.getElementById('task-buttons');
+    container.innerHTML = '';
+    
+    const title = document.getElementById('task-select-title');
+    title.textContent = tempState.mode === 'pay' ? '負債解消する文字数を選択' : 'お題の文字数を選択';
+
+    Object.keys(taskData).forEach(keyStr => {
+      // 未使用のお題があるかチェック
+      const availableTasks = taskData[keyStr].filter((_, idx) => !gameState.usedTasks.includes(`${keyStr}-${idx}`));
+      const hasStock = availableTasks.length > 0;
+
+      const btn = document.createElement('button');
+      btn.className = `btn ${hasStock ? 'btn-primary' : 'btn-secondary'}`;
+      
+      if (keyStr === "0") {
+        btn.textContent = `練習問題（2文字） (残り: ${availableTasks.length})`;
+      } else {
+        btn.textContent = `${keyStr}文字のお題 (残り: ${availableTasks.length})`;
+      }
+      
+      btn.disabled = !hasStock;
+      
+      if (hasStock) {
+        btn.onclick = () => selectTask(keyStr, availableTasks);
+      }
+      
+      container.appendChild(btn);
+    });
+  }
+
+  function selectTask(keyStr, availableTasks) {
+    const originalIndices = [];
+    taskData[keyStr].forEach((t, i) => {
+      if (!gameState.usedTasks.includes(`${keyStr}-${i}`)) {
+        originalIndices.push(i);
+      }
+    });
+    
+    const randomIdx = Math.floor(Math.random() * originalIndices.length);
+    const actualIndex = originalIndices[randomIdx];
+    
+    let length = parseInt(keyStr);
+    if (keyStr === "0") length = 2; // 練習問題の文字数は2文字として扱う
+
+    tempState.taskKey = keyStr;
+    tempState.selectedLength = length;
+    tempState.taskIndex = actualIndex;
+    tempState.taskText = taskData[keyStr][actualIndex];
+    
+    // 負債による必要文字数の計算
+    const debtPenalty = Math.round(gameState.debt);
+    if (tempState.mode === 'normal' && keyStr !== "0") {
+      tempState.requiredLength = length + debtPenalty;
+    } else {
+      tempState.requiredLength = length; // 負債解消時や練習問題時はそのまま
+    }
+
+    showExecutionPhase();
+  }
+
+  // --- ゲーム進行: フェーズ3 (実行) ---
+  function showExecutionPhase() {
+    document.getElementById('phase-task-select').classList.add('hidden');
+    document.getElementById('phase-execution').classList.remove('hidden');
+    
+    const isPractice = tempState.taskKey === "0";
+    
+    document.getElementById('current-task-category').textContent = isPractice 
+      ? `【練習用お題】` 
+      : `【元のお題: ${tempState.selectedLength}文字】`;
+    document.getElementById('current-task-text').textContent = tempState.taskText;
+    
+    const constraintEl = document.getElementById('current-task-constraint');
+    const previewEl = document.getElementById('debt-generation-preview');
+    const giveupBtn = document.getElementById('giveup-btn');
+    
+    if (isPractice) {
+      constraintEl.textContent = `練習のため、実際の得点・負債は変動しません。`;
+      constraintEl.style.color = '#6c757d';
+      previewEl.classList.add('hidden');
+      giveupBtn.textContent = "あきらめる (ペナルティなし)";
+    } else if (tempState.mode === 'normal') {
+      if (tempState.requiredLength > tempState.selectedLength) {
+        constraintEl.textContent = `⚠️ 負債の影響により「${tempState.requiredLength}文字」で回答してください！`;
+        constraintEl.style.color = '#ea4335';
+      } else {
+        constraintEl.textContent = `回答文字数: ${tempState.selectedLength}文字`;
+        constraintEl.style.color = '#ea4335';
+      }
+      previewEl.textContent = "クリア後、ランダムに負債が発生します...";
+      previewEl.classList.remove('hidden');
+      giveupBtn.textContent = "あきらめる (負債+0.1)";
+    } else {
+      constraintEl.textContent = `負債解消モード: 回答文字数 ${tempState.selectedLength}文字`;
+      constraintEl.style.color = '#34a853';
+      previewEl.classList.add('hidden');
+      giveupBtn.textContent = "あきらめる (負債+0.1)";
+    }
+  }
+
+  // ギブアップ機能
+  function giveUpTask() {
+    const isPractice = tempState.taskKey === "0";
+    const confirmMsg = isPractice 
+      ? "練習をあきらめますか？\n（ペナルティはありません）" 
+      : "本当にギブアップしますか？\n・点数は入りません\n・負債が 0.1 増えます";
+      
+    if(!confirm(confirmMsg)) return;
+
+    if (isPractice) {
+      const logMsg = `[練習ギブアップ] お題「${tempState.taskText}」を放棄。※ペナルティなし`;
+      gameState.history.unshift(logMsg);
+      saveData();
+      document.getElementById('phase-execution').classList.add('hidden');
+      document.getElementById('phase-task-select').classList.remove('hidden');
+      renderTaskButtons();
+      alert("練習をギブアップしました。");
+      return;
+    }
+
+    const penalty = 0.1;
+    const oldDebt = gameState.debt;
+    gameState.debt += penalty;
+
+    const logMsg = `[ギブアップ] お題「${tempState.taskText}」を放棄。負債 +0.1 (${oldDebt.toFixed(2)} -> ${gameState.debt.toFixed(2)})`;
+    gameState.history.unshift(logMsg);
+
+    saveData();
+    
+    document.getElementById('phase-execution').classList.add('hidden');
+    document.getElementById('phase-task-select').classList.remove('hidden');
+    
+    renderTaskButtons();
+    
+    alert("ギブアップしました。(負債 +0.1)");
+  }
+
+  function completeTask() {
+    // 使用済み登録
+    gameState.usedTasks.push(`${tempState.taskKey}-${tempState.taskIndex}`);
+    
+    let logMsg = "";
+    const isPractice = tempState.taskKey === "0";
+
+    if (isPractice) {
+      // --- シミュレーションの計算 ---
+      let simPoints = tempState.selectedLength;
+      if (simPoints >= 5) simPoints += 1; 
+      
+      // 0.1 ~ 1.0 のランダムな負債
+      const simNewDebt = Math.floor(Math.random() * 10 + 1) / 10;
+      const oldDebt = gameState.debt;
+      const simCalculatedDebt = oldDebt * (1 + simNewDebt) + simNewDebt;
+
+      const simMessage = 
+        `【もし本番だったら...のシミュレーション】\n` +
+        `獲得スコア: ${simPoints}点\n` +
+        `発生した新規負債: +${simNewDebt.toFixed(1)}\n` +
+        `現在の負債の変動: ${oldDebt.toFixed(2)} -> ${simCalculatedDebt.toFixed(2)}\n\n` +
+        `※練習問題のため、実際のデータには一切反映されません。`;
+
+      logMsg = `[練習クリア] お題「${tempState.taskText}」をクリア。※得点・負債の変動なし`;
+      gameState.history.unshift(logMsg);
+      saveData();
+      
+      document.getElementById('phase-execution').classList.add('hidden');
+      document.getElementById('phase-mode').classList.remove('hidden');
+      
+      alert("練習クリアおめでとうございます！\n\n" + simMessage);
+      return;
+    }
+
+    if (tempState.mode === 'normal') {
+      // 1. 得点計算
+      let points = tempState.selectedLength;
+      if (points >= 5) points += 1; // ボーナス
+      
+      gameState.score += points;
+      
+      // 2. 負債発生 (0.1 ~ 1.0)
+      const newDebt = Math.floor(Math.random() * 10 + 1) / 10;
+      
+      // 負債計算式
+      const oldDebt = gameState.debt;
+      const calculatedDebt = oldDebt * (1 + newDebt) + newDebt;
+      gameState.debt = calculatedDebt;
+      
+      logMsg = `[継続] お題「${tempState.taskText}」(${tempState.requiredLength}文字回答) をクリア。+${points}点。負債発生(+${newDebt})により ${oldDebt.toFixed(2)} -> ${gameState.debt.toFixed(2)}`;
+
+    } else {
+      // 負債解消モード
+      const reduceAmount = tempState.selectedLength;
+      const oldDebt = gameState.debt;
+      gameState.debt = Math.max(0, gameState.debt - reduceAmount);
+      
+      logMsg = `[解消] お題「${tempState.taskText}」をクリア。負債を -${reduceAmount} 解消 (${oldDebt.toFixed(2)} -> ${gameState.debt.toFixed(2)})`;
+    }
+
+    // 履歴追加
+    gameState.history.unshift(logMsg);
+    
+    saveData();
+    
+    // モード選択に戻る
+    document.getElementById('phase-execution').classList.add('hidden');
+    document.getElementById('phase-mode').classList.remove('hidden');
+    
+    alert("お疲れ様でした！\n" + logMsg);
+  }
+
+</script>
+</body>
+</html>
